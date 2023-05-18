@@ -7,22 +7,20 @@ import os
 from dotenv import load_dotenv
 import sentry_sdk
 import json
+import hashlib
 import time
 import pypdf
 import random
 import logging
 import itertools
-import faiss
 import pandas as pd
-from typing import Dict, List
+from typing import List
 from json import JSONDecodeError
 from langchain.llms import Anthropic
-from langchain.chat_models import ChatAnthropic
-from langchain.schema import BaseRetriever, Document
+from langchain.schema import Document
 from langchain.chains.question_answering import load_qa_chain
 from langchain.vectorstores import FAISS
 from langchain.chains import RetrievalQA
-from llama_index import LangchainEmbedding
 from langchain.chat_models import ChatOpenAI
 from langchain.chains import QAGenerationChain
 from langchain.retrievers import SVMRetriever
@@ -33,7 +31,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, File, UploadFile, Form
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter, CharacterTextSplitter
-from text_utils import GRADE_DOCS_PROMPT, GRADE_ANSWER_PROMPT, GRADE_DOCS_PROMPT_FAST, GRADE_ANSWER_PROMPT_FAST, GRADE_ANSWER_PROMPT_BIAS_CHECK, GRADE_ANSWER_PROMPT_OPENAI, QA_CHAIN_PROMPT
+from text_utils import gen_qa_chain_prompt, gen_grade_docs_prompt, gen_grade_answer_prompt
+from langchain_wenxin.llms import Wenxin
 
 def generate_eval(text, chunk, logger):
     """
@@ -80,8 +79,11 @@ def split_texts(text, chunk_size, overlap, split_method, logger):
 
     logger.info("`Splitting doc ...`")
     if split_method == "RecursiveTextSplitter":
+        separators = ["\n\n", "\n", "。", "？", "！", ".", "?", "!",
+                      "；", ";", "，", ",", " ", ""]
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size,
-                                                       chunk_overlap=overlap)
+                                                       chunk_overlap=overlap,
+                                                       separators=separators)
     elif split_method == "CharacterTextSplitter":
         text_splitter = CharacterTextSplitter(separator=" ",
                                               chunk_size=chunk_size,
@@ -90,7 +92,7 @@ def split_texts(text, chunk_size, overlap, split_method, logger):
     return splits
 
 
-def make_llm(model):
+def make_llm(model: str):
     """
     Make LLM
     @param model: LLM to use
@@ -103,6 +105,8 @@ def make_llm(model):
         llm = Anthropic(temperature=0)
     elif model == "Anthropic-100k":
         llm = Anthropic(model="claude-v1-100k",temperature=0)
+    elif model in ("wenxin", "eb-instant"):
+        llm = Wenxin(model=model)
     return llm
 
 
@@ -125,7 +129,7 @@ def make_retriever(splits, retriever_type, embeddings, num_neighbors, llm, logge
 
     # Select retriever
     if retriever_type == "similarity-search":
-        vectorstore = FAISS.from_texts(splits, embd)
+        vectorstore = cached_faiss(splits, embeddings)
         retriever = vectorstore.as_retriever(k=num_neighbors)
     elif retriever_type == "SVM":
         retriever = SVMRetriever.from_texts(splits, embd)
@@ -135,46 +139,77 @@ def make_retriever(splits, retriever_type, embeddings, num_neighbors, llm, logge
          retriever = llm
     return retriever
 
-def make_chain(llm, retriever, retriever_type):
+def cached_faiss(splits, embeddings: str) -> FAISS:
+    """
+    Cache vectorstore
+    @param splits: list of str splits
+    @param embeddings: embeddings to use
+    @return: vectorstore
+    """
+    if embeddings == "OpenAI":
+        embd = OpenAIEmbeddings()
+    else:
+        raise ValueError(f"Unknown embeddings: {embeddings}")
+    to_hash = "".join(splits) + "\n" + embeddings
+    splits_hash = hashlib.sha256(to_hash.encode("utf-8")).hexdigest()
+
+    cache_dir = os.path.join(".cache", splits_hash)
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    index_name = "index"
+    index_file = os.path.join(cache_dir, f"{index_name}.faiss")
+    if os.path.exists(index_file):
+        vectorstore = FAISS.load_local(cache_dir, embd, index_name)
+    else:
+        # Cache vectorstore
+        vectorstore = FAISS.from_texts(splits, embd)
+        vectorstore.save_local(cache_dir, index_name)
+    return vectorstore
+
+def make_chain(llm, retriever, retriever_type, language):
     """
     Make retrieval chain
     @param llm: model
     @param retriever: retriever
     @param retriever_type: retriever type
+    @param language: language (en or zh-cn)
     @return: QA chain
     """
+    prompt = gen_qa_chain_prompt(language)
 
-    chain_type_kwargs = {"prompt": QA_CHAIN_PROMPT}
+    chain_type_kwargs = {"prompt": prompt}
     if retriever_type == "Anthropic-100k":
-        qa_chain = load_qa_chain(llm,chain_type="stuff",prompt=QA_CHAIN_PROMPT)
+        qa_chain = load_qa_chain(llm,chain_type="stuff",prompt=prompt)
     else:
         qa_chain = RetrievalQA.from_chain_type(llm,
                                                chain_type="stuff",
                                                retriever=retriever,
                                                chain_type_kwargs=chain_type_kwargs,
-                                               input_key="question")
+                                               input_key="question",
+                                               verbose=True)
     return qa_chain
 
 
-def grade_model_answer(predicted_dataset, predictions, grade_answer_prompt, logger):
+def grade_model_answer(predicted_dataset, predictions, grade_answer_prompt, logger, language):
     """
     Grades the answer based on ground truth and model predictions.
     @param predicted_dataset: A list of dictionaries containing ground truth questions and answers.
     @param predictions: A list of dictionaries containing model predictions for the questions.
     @param grade_answer_prompt: The prompt level for the grading. Either "Fast" or "Full".
     @param logger: logger
+    @param language: language (en or zh-cn)
     @return: A list of scores for the distilled answers.
     """
 
     logger.info("`Grading model answer ...`")
     if grade_answer_prompt == "Fast":
-        prompt = GRADE_ANSWER_PROMPT_FAST
+        prompt = gen_grade_answer_prompt("fast", language)
     elif grade_answer_prompt == "Descriptive w/ bias check":
-        prompt = GRADE_ANSWER_PROMPT_BIAS_CHECK
+        prompt = gen_grade_answer_prompt("bias_check", language)
     elif grade_answer_prompt == "OpenAI grading prompt":
-        prompt = GRADE_ANSWER_PROMPT_OPENAI
+        prompt = gen_grade_answer_prompt("openai", language)
     else:
-        prompt = GRADE_ANSWER_PROMPT
+        prompt = gen_grade_answer_prompt("default", language)
 
     eval_chain = QAEvalChain.from_llm(llm=ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0),
                                       prompt=prompt)
@@ -185,20 +220,22 @@ def grade_model_answer(predicted_dataset, predictions, grade_answer_prompt, logg
     return graded_outputs
 
 
-def grade_model_retrieval(gt_dataset, predictions, grade_docs_prompt, logger):
+def grade_model_retrieval(gt_dataset, predictions, grade_docs_prompt, logger, language):
     """
     Grades the relevance of retrieved documents based on ground truth and model predictions.
     @param gt_dataset: list of dictionaries containing ground truth questions and answers.
     @param predictions: list of dictionaries containing model predictions for the questions
     @param grade_docs_prompt: prompt level for the grading.
+    @param logger: logger
+    @param language: language (en or zh-cn)
     @return: list of scores for the retrieved documents.
     """
 
     logger.info("`Grading relevance of retrieved docs ...`")
     if grade_docs_prompt == "Fast":
-        prompt = GRADE_DOCS_PROMPT_FAST
+        prompt = gen_grade_docs_prompt("fast", language)
     else:
-        prompt = GRADE_DOCS_PROMPT
+        prompt = gen_grade_docs_prompt("default", language)
 
     eval_chain = QAEvalChain.from_llm(llm=ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0),
                                       prompt=prompt)
@@ -209,7 +246,7 @@ def grade_model_retrieval(gt_dataset, predictions, grade_docs_prompt, logger):
     return graded_outputs
 
 
-def run_eval(chain, retriever, eval_qa_pair, grade_prompt, retriever_type, num_neighbors, text, logger):
+def run_eval(chain, retriever, eval_qa_pair, grade_prompt, retriever_type, num_neighbors, text, logger, language):
     """
     Runs evaluation on a model's performance on a given evaluation dataset.
     @param chain: Model chain used for answering questions
@@ -219,6 +256,8 @@ def run_eval(chain, retriever, eval_qa_pair, grade_prompt, retriever_type, num_n
     @param retriever_type: String specifying the type of retriever used
     @param num_neighbors: Number of neighbors to retrieve using the retriever
     @param text: full document text
+    @param logger: logger
+    @param language: language (en or zh-cn)
     @return: A tuple of four items:
     - answers_grade: A dictionary containing scores for the model's answers.
     - retrieval_grade: A dictionary containing scores for the model's document retrieval.
@@ -263,9 +302,9 @@ def run_eval(chain, retriever, eval_qa_pair, grade_prompt, retriever_type, num_n
 
     # Grade
     graded_answers = grade_model_answer(
-        gt_dataset, predictions, grade_prompt, logger)
+        gt_dataset, predictions, grade_prompt, logger, language)
     graded_retrieval = grade_model_retrieval(
-        gt_dataset, retrieved_docs, grade_prompt, logger)
+        gt_dataset, retrieved_docs, grade_prompt, logger, language)
     return graded_answers, graded_retrieval, latency, predictions
 
 load_dotenv()
@@ -312,12 +351,14 @@ def run_evaluator(
     model_version,
     grade_prompt,
     num_neighbors,
-    test_dataset
+    test_dataset,
+    language
 ):
 
     # Set up logging
     logging.config.fileConfig('logging.conf', disable_existing_loggers=False)
     logger = logging.getLogger(__name__)
+    logger.info(f"Running evaluator with the following parameters: {locals()}")
 
     # Read content of files
     texts = []
@@ -359,7 +400,7 @@ def run_evaluator(
         splits, retriever_type, embeddings, num_neighbors, llm, logger)
 
     logger.info("Make chain")
-    qa_chain = make_chain(llm, retriever, retriever_type)
+    qa_chain = make_chain(llm, retriever, retriever_type, language)
 
     for i in range(num_eval_questions):
 
@@ -377,7 +418,8 @@ def run_evaluator(
 
         # Run eval
         graded_answers, graded_retrieval, latency, predictions = run_eval(
-            qa_chain, retriever, eval_pair, grade_prompt, retriever_type, num_neighbors, text, logger)
+            qa_chain, retriever, eval_pair, grade_prompt, retriever_type,
+            num_neighbors, text, logger, language)
 
         # Assemble output
         d = pd.DataFrame(predictions)
@@ -386,9 +428,9 @@ def run_evaluator(
         d['latency'] = latency
 
         # Summary statistics
-        d['answerScore'] = [{'score': 1 if "Incorrect" not in text else 0,
+        d['answerScore'] = [{'score': 1 if (("Incorrect" not in text) and ("错误" not in text)) else 0,
                              'justification': text} for text in d['answerScore']]
-        d['retrievalScore'] = [{'score': 1 if "Incorrect" not in text else 0,
+        d['retrievalScore'] = [{'score': 1 if (("Incorrect" not in text) and ("错误" not in text)) else 0,
                                 'justification': text} for text in d['retrievalScore']]
 
         # Convert dataframe to dict
@@ -413,7 +455,10 @@ async def create_response(
     grade_prompt: str = Form("Fast"),
     num_neighbors: int = Form(3),
     test_dataset: str = Form("[]"),
+    language: str = Form("en")
 ):
     test_dataset = json.loads(test_dataset)
-    return EventSourceResponse(run_evaluator(files, num_eval_questions, chunk_chars,
-                                             overlap, split_method, retriever_type, embeddings, model_version, grade_prompt, num_neighbors, test_dataset), headers={"Content-Type": "text/event-stream", "Connection": "keep-alive", "Cache-Control": "no-cache"})
+    return EventSourceResponse(run_evaluator(
+        files, num_eval_questions, chunk_chars, overlap, split_method, retriever_type,
+        embeddings, model_version, grade_prompt, num_neighbors, test_dataset, language
+        ), headers={"Content-Type": "text/event-stream", "Connection": "keep-alive", "Cache-Control": "no-cache"})

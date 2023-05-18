@@ -9,6 +9,7 @@ export type FormValues = {
   model: string;
   retriever: string;
   gradingPrompt: string;
+  language: string;
   numNeighbors: number;
   files: any[];
 };

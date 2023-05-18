@@ -10,13 +10,14 @@ const DemoPage = () => {
   const form = useForm<FormValues>({
     defaultValues: {
       evalQuestionsCount: 5,
-      chunkSize: 1000,
+      chunkSize: 500,
       overlap: 100,
       splitMethod: "RecursiveTextSplitter",
       embeddingAlgorithm: "OpenAI",
-      model: "gpt-3.5-turbo",
+      model: "wenxin",
       retriever: "similarity-search",
       gradingPrompt: "Descriptive",
+      language: "zh-cn",
       numNeighbors: 3,
       files: [],
     },

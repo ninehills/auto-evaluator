@@ -9,14 +9,15 @@ import Playground from "../../components/Playground";
 const PlaygroundPage = () => {
   const form = useForm<FormValues>({
     defaultValues: {
-      evalQuestionsCount: 1,
-      chunkSize: 1000,
+      evalQuestionsCount: 5,
+      chunkSize: 500,
       overlap: 100,
       splitMethod: "RecursiveTextSplitter",
       embeddingAlgorithm: "OpenAI",
-      model: "gpt-3.5-turbo",
+      model: "wenxin",
       retriever: "similarity-search",
       gradingPrompt: "Descriptive",
+      language: "zh-cn",
       numNeighbors: 3,
       files: [],
     },

@@ -1,0 +1,6 @@
+"question","answer",
+"TiDB 支持哪些核心功能，并且这些功能有哪些实际应用场景？","TiDB 支持一键水平扩容或缩容、金融级高可用、实时 HTAP、云原生的分布式数据库、兼容 MySQL 5.7 协议和 MySQL 生态等核心功能。这些功能使得 TiDB 适合高可用、强一致要求较高、数据规模较大等各种应用场景，例如，金融行业的一致性和高可靠性要求、海量数据和高并发的 OLTP 场景、实时 HTAP 场景，以及数据汇聚、二次加工处理的场景。",
+"TiDB 如何实现金融级高可用？","TiDB 的数据采用多副本存储，数据副本通过 Multi-Raft 协议同步事务日志，多数派写入成功事务才能提交，确保数据强一致性且少数副本发生故障时不影响数据的可用性。可以按需配置副本地理位置、副本数量等策略满足不同容灾级别的要求。",
+"什么是实时 HTAP，并且 TiDB 是如何实现的？","HTAP 是 Hybrid Transactional/Analytical Processing 的缩写，也就是混合事务和分析处理。在 TiDB 中，提供行存储引擎 TiKV、列存储引擎 TiFlash 两款存储引擎，TiFlash 通过 Multi-Raft Learner 协议实时从 TiKV 复制数据，确保行存储引擎 TiKV 和列存储引擎 TiFlash 之间的数据强一致。TiKV、TiFlash 可按需部署在不同的机器，解决 HTAP 资源隔离的问题。",
+"TiDB 如何兼容 MySQL？","TiDB 兼容 MySQL 5.7 协议、MySQL 常用的功能、MySQL 生态，应用无需或者修改少量代码即可从 MySQL 迁移到 TiDB。同时，TiDB 还提供丰富的数据迁移工具帮助应用便捷完成数据迁移。",
+"TiDB 的整体架构是怎样的？","TiDB 分布式数据库将整体架构拆分成了多个模块，包括 TiDB Server、PD (Placement Driver) Server、以及存储节点 TiKV Server 和 TiFlash。其中，TiDB Server 是 SQL 层，PD Server 是元信息管理模块，TiKV Server 和 TiFlash 是存储节点。各模块之间互相通信，组成完整的 TiDB 系统。",

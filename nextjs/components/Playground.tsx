@@ -163,6 +163,7 @@ const Playground = ({ form }: { form: Form }) => {
     formData.append("grade_prompt", data.gradingPrompt);
     formData.append("num_neighbors", data.numNeighbors.toString());
     formData.append("test_dataset", JSON.stringify(testDataset));
+    formData.append("language", data.language);
 
     if (!IS_DEV) {
       LogRocket.track("PlaygroundSubmission", {
@@ -177,6 +178,7 @@ const Playground = ({ form }: { form: Form }) => {
         promptStyle: data.gradingPrompt,
         numNeighbors: data.numNeighbors,
         uploadedTestDataset: !!testDataset.length,
+        language: data.language,
       });
     }
 

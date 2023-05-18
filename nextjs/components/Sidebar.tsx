@@ -52,13 +52,14 @@ const Sidebar = ({ form }: { form: Form }) => {
                   {...field}
                   labelTransition="skew-down"
                   marks={[
+                    { value: 200, label: "200" },
                     { value: 500, label: "500" },
                     { value: 1000, label: "1000" },
                     { value: 1500, label: "1500" },
                     { value: 2000, label: "2000" },
                   ]}
                   max={2000}
-                  min={500}
+                  min={200}
                   step={100}
                 />
               )}
@@ -98,6 +99,8 @@ const Sidebar = ({ form }: { form: Form }) => {
                     { label: "GPT 3.5 Turbo", value: "gpt-3.5-turbo" },
                     { label: "GPT 4", value: "gpt-4" },
                     { label: "Anthropic", value: "anthropic" },
+                    { label: "文心一言", value: "wenxin"},
+                    { label: "文心 EBLite", value: "eb-instant"},
                   ]}
                 />
               )}
@@ -176,6 +179,28 @@ const Sidebar = ({ form }: { form: Form }) => {
             />
           </div>
           <div>
+            <Text fz="md">Language</Text>
+            <Controller
+              name="language"
+              control={control}
+              render={({ field }) => (
+                <Select
+                  {...field}
+                  data={[
+                    {
+                      label: "English",
+                      value: "en",
+                    },
+                    {
+                      label: "简体中文",
+                      value: "zh-cn",
+                    }
+                  ]}
+                />
+              )}
+            />
+          </div>
+          <div>
             <Text fz="md">Number of chunks to retrieve</Text>
             <Controller
               name="numNeighbors"
@@ -185,12 +210,14 @@ const Sidebar = ({ form }: { form: Form }) => {
                   {...field}
                   labelTransition="skew-down"
                   marks={[
+                    { value: 1, label: "1" },
+                    { value: 2, label: "2" },
                     { value: 3, label: "3" },
                     { value: 4, label: "4" },
                     { value: 5, label: "5" },
                   ]}
                   max={5}
-                  min={3}
+                  min={1}
                   step={1}
                 />
               )}
